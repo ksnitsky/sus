@@ -77,7 +77,12 @@ fn pad_zero(n: Int) -> String {
 
 /// Получить текущее время в секундах (Unix timestamp)
 @external(erlang, "erlang", "system_time")
-pub fn now() -> Int
+pub fn now_internal() -> Int
+
+/// Получить текущее время в секундах (Unix timestamp)
+pub fn now() -> Int {
+  now_internal() / 1_000_000_000
+}
 
 /// JSON encoder для Task
 pub fn task_to_json(task: Task) -> json.Json {

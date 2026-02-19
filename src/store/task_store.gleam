@@ -8,8 +8,7 @@ import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/otp/actor
 import types/task.{
-  type CreateTaskData, type Task, type TaskStatus, Completed, InProgress,
-  NotStarted, Paused, Task,
+  type CreateTaskData, type Task, InProgress, NotStarted, Paused, Task,
 }
 
 // Типы сообщений -------------------------------------------------------------

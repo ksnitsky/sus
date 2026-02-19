@@ -1,7 +1,5 @@
-// pages/tasks.gleam
-// Server component для страницы списка задач
-
 import components/layout
+import gleam/erlang/process
 import gleam/list
 import gleam/option.{Some}
 import lustre.{type App}
@@ -12,8 +10,8 @@ import lustre/element/html
 import lustre/event
 import store/task_store.{type TaskStore}
 import types/task.{
-  type CreateTaskData, type Task, Completed, CreateTaskData, InProgress,
-  NotStarted, Paused, Task, format_duration, status_to_class, status_to_string,
+  type Task, Completed, CreateTaskData, InProgress, NotStarted, Paused, Task,
+  format_duration, status_to_class, status_to_string,
 }
 
 // MODEL -----------------------------------------------------------------------
@@ -35,7 +33,7 @@ pub fn init(store: TaskStore) -> Model {
     new_task_name: "",
     new_task_description: "",
     store: store,
-    current_time: task.now() / 1_000_000_000,
+    current_time: task.now(),
   )
 }
 
@@ -52,19 +50,25 @@ pub opaque type Msg {
   UserClickedPauseTask(Int)
   UserClickedCompleteTask(Int)
   UserClickedDeleteTask(Int)
+
+  // Таймер
+  Tick
+  CheckActiveTimers
 }
 
 pub fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
   case msg {
-    UserChangedTaskName(name) -> {
-      #(Model(..model, new_task_name: name), effect.none())
-    }
+    UserChangedTaskName(name) -> #(
+      Model(..model, new_task_name: name),
+      effect.none(),
+    )
 
-    UserChangedTaskDescription(description) -> {
-      #(Model(..model, new_task_description: description), effect.none())
-    }
+    UserChangedTaskDescription(description) -> #(
+      Model(..model, new_task_description: description),
+      effect.none(),
+    )
 
-    UserClickedAddTask -> {
+    UserClickedAddTask ->
       case model.new_task_name {
         "" -> #(model, effect.none())
         _ -> {
@@ -86,30 +90,54 @@ pub fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
           )
         }
       }
-    }
 
     UserClickedStartTask(id) -> {
-      let _ = task_store.start_timer(model.store, id, model.current_time)
+      let now = task.now()
+      let _ = task_store.start_timer(model.store, id, now)
       let tasks = task_store.get_all(model.store)
-      #(Model(..model, tasks: tasks), effect.none())
+      let has_active = list.any(tasks, fn(t) { t.status == InProgress })
+      let tick_effect = case has_active {
+        True -> schedule_tick()
+        False -> effect.none()
+      }
+      #(Model(..model, tasks: tasks, current_time: now), tick_effect)
+    }
+
+    Tick -> {
+      let new_time = task.now()
+      let has_active = list.any(model.tasks, fn(t) { t.status == InProgress })
+      let next_effect = case has_active {
+        True -> schedule_tick()
+        False -> effect.none()
+      }
+      #(Model(..model, current_time: new_time), next_effect)
+    }
+
+    CheckActiveTimers -> {
+      let has_active = list.any(model.tasks, fn(t) { t.status == InProgress })
+      let tick_effect = case has_active {
+        True -> schedule_tick()
+        False -> effect.none()
+      }
+      #(model, tick_effect)
     }
 
     UserClickedPauseTask(id) -> {
-      let _ = task_store.stop_timer(model.store, id, model.current_time)
+      let now = task.now()
+      let _ = task_store.stop_timer(model.store, id, now)
       let tasks = task_store.get_all(model.store)
-      #(Model(..model, tasks: tasks), effect.none())
+      #(Model(..model, tasks: tasks, current_time: now), effect.none())
     }
 
     UserClickedCompleteTask(id) -> {
-      // Сначала останавливаем таймер если запущен
-      let _ = task_store.stop_timer(model.store, id, model.current_time)
-      // Затем обновляем статус
+      let now = task.now()
+      let _ = task_store.stop_timer(model.store, id, now)
       let _ =
         task_store.update(model.store, id, fn(task) {
           Task(..task, status: Completed)
         })
       let tasks = task_store.get_all(model.store)
-      #(Model(..model, tasks: tasks), effect.none())
+      #(Model(..model, tasks: tasks, current_time: now), effect.none())
     }
 
     UserClickedDeleteTask(id) -> {
@@ -118,6 +146,22 @@ pub fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
       #(Model(..model, tasks: tasks), effect.none())
     }
   }
+}
+
+// Timer -----------------------------------------------------------------------
+
+/// Start a timer in a background.
+/// Each task spawns timer for himsefl when user pressed start task.
+fn schedule_tick() -> Effect(Msg) {
+  effect.from(fn(dispatch) {
+    let _ =
+      process.spawn(fn() {
+        process.sleep(1000)
+        dispatch(Tick)
+      })
+
+    Nil
+  })
 }
 
 // VIEW ------------------------------------------------------------------------
@@ -180,10 +224,8 @@ fn empty_state() -> Element(Msg) {
 fn task_item(task: Task, current_time: Int) -> Element(Msg) {
   let status_class = status_to_class(task.status)
   let display_time = case task.status, task.started_at {
-    InProgress, Some(started) -> {
-      // Для активной задачи показываем накопленное + время с момента старта
+    InProgress, Some(started) ->
       task.time_spent_seconds + { current_time - started }
-    }
     _, _ -> task.time_spent_seconds
   }
 
@@ -260,7 +302,9 @@ fn task_actions(task: Task) -> List(Element(Msg)) {
 // COMPONENT -------------------------------------------------------------------
 
 fn init_with_store(store: TaskStore) -> #(Model, Effect(Msg)) {
-  #(init(store), effect.none())
+  let check_effect = effect.from(fn(dispatch) { dispatch(CheckActiveTimers) })
+
+  #(init(store), check_effect)
 }
 
 pub fn component(store: TaskStore) -> App(_, Model, Msg) {
