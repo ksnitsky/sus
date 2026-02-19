@@ -15,12 +15,13 @@ gleam test  # запуск тестов
 ## Архитектура
 
 ### Структура
-- `src/sus.gleam` - точка входа, запуск HTTP сервера
-- `src/router.gleam` - маршрутизация: HTML, JS runtime, WebSocket
-- `src/pages/tasks.gleam` - Lustre компонент (Model/Update/View)
-- `src/store/task_store.gleam` - in-memory хранилище через OTP actor
-- `src/types/task.gleam` - типы Task, TaskStatus + JSON кодирование
-- `src/components/layout.gleam` - общий layout + inline CSS
+- `src/sus.gleam` - entry point, HTTP server startup
+- `src/router.gleam` - routing: HTML, JS runtime, WebSocket
+- `src/pages/tasks.gleam` - Lustre component (Model/Update/View)
+- `src/store/task_store.gleam` - in-memory storage via OTP actor
+- `src/types/task.gleam` - Task, TaskStatus types + JSON encoding
+- `src/components/layout.gleam` - shared layout + inline CSS
+- `src/middleware/logger.gleam` - HTTP request logging middleware
 
 ### Ключевые паттерны
 
@@ -34,10 +35,42 @@ gleam test  # запуск тестов
 - Асинхронные сообщения с таймаутом 5000ms
 - Интерфейс позволяет легко заменить на БД
 
-**3. Таймер задач**
-- `time_spent_seconds` - накопленное время
-- `started_at` - timestamp запуска (None когда пауза)
-- Для активных задач время считается: `time_spent + (now - started_at)`
+**3. Таймер задач (Time Tracking)**
+
+The timer uses a dual-field approach to track time without periodic updates:
+
+```gleam
+type Task {
+  time_spent_seconds: Int,     // Accumulated time (stored permanently)
+  started_at: Option(Int),     // Unix timestamp when timer started (None when paused)
+  status: TaskStatus,          // NotStarted | InProgress | Paused | Completed
+}
+```
+
+**How it works:**
+- `start_timer(store, id, current_time)` - Sets `started_at = Some(current_time)` and status = InProgress
+- `stop_timer(store, id, current_time)` - Calculates elapsed time: `current_time - started_at`, adds to `time_spent_seconds`, sets `started_at = None` and status = Paused
+- **Display calculation**: For active tasks: `time_spent_seconds + (now - started_at)`
+
+**Important**: The timer uses a periodic Tick (every second) to update the UI for active tasks. Each task spawns its own timer when started.
+
+**4. HTTP Request Logging**
+
+```gleam
+// router.gleam
+use <- logger.log_request(request)
+```
+
+Format: `METHOD /path STATUS duration_ms`
+
+Example:
+```
+GET / 200 5ms
+GET /lustre/runtime.mjs 200 2ms
+POST /ws/tasks 200 15ms
+```
+
+Implementation uses Erlang's `erlang:system_time/1` for timing and `io:format/2` for output to stderr.
 
 ### Типы данных
 
@@ -77,13 +110,17 @@ task_store.stop_timer(store, id, current_time) -> Option(Task)
 - `status-completed` - зелёная рамка
 - `status-paused` - оранжевая рамка
 
+## Code Style
+
+**Important**: All code comments must be written in **English only**. This ensures consistency and makes the codebase accessible to all contributors.
+
 ## Ограничения
 
 - Хранилище в памяти - данные теряются при перезапуске
 - Нет персистентности
 - Нет валидации входных данных
 - Нет аутентификации
-- Таймер обновляется только при действиях (нет периодического Tick)
+- Таймер использует периодический Tick каждую секунду для обновления отображения активных задач
 
 ## Зависимости
 
