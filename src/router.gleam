@@ -12,26 +12,31 @@ import gleam/string_tree
 import lustre
 import lustre/element
 import lustre/server_component
+import middleware/logger
 import mist.{type Connection, type ResponseData}
 import pages/tasks
 import store/task_store.{type TaskStore}
 
-/// Главная функция маршрутизации
 pub fn handle_request(
   request: Request(Connection),
   store: TaskStore,
 ) -> Response(ResponseData) {
+  use <- logger.log_request(request)
+  handle_request_inner(request, store)
+}
+
+fn handle_request_inner(
+  request: Request(Connection),
+  store: TaskStore,
+) -> Response(ResponseData) {
   case request.path_segments(request) {
-    // Главная страница с серверным компонентом
     [] -> serve_html()
 
     // JavaScript runtime для серверных компонентов
     ["lustre", "runtime.mjs"] -> serve_runtime()
 
-    // WebSocket для серверного компонента задач
     ["ws", "tasks"] -> serve_tasks(request, store)
 
-    // 404 для остальных путей
     _ -> response.set_body(response.new(404), mist.Bytes(bytes_tree.new()))
   }
 }
