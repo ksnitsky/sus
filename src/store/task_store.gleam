@@ -1,5 +1,5 @@
 // store/task_store.gleam
-// Хранилище задач в памяти с интерфейсом для легкой замены на БД
+// In-memory task storage with interface for easy database replacement
 
 import gleam/dict.{type Dict}
 import gleam/erlang/process.{type Subject}
@@ -11,9 +11,9 @@ import types/task.{
   type CreateTaskData, type Task, InProgress, NotStarted, Paused, Task,
 }
 
-// Типы сообщений -------------------------------------------------------------
+// Message types -------------------------------------------------------------
 
-/// Сообщения для actor хранилища
+/// Messages for actor storage
 pub type TaskStoreMessage {
   GetAll(reply_to: Subject(List(Task)))
   GetById(id: Int, reply_to: Subject(Option(Task)))
@@ -24,14 +24,14 @@ pub type TaskStoreMessage {
   StopTimer(id: Int, current_time: Int, reply_to: Subject(Option(Task)))
 }
 
-/// Тип для абстракции над хранилищем.
+/// Type for abstraction over storage
 pub opaque type TaskStore {
   TaskStore(subject: Subject(TaskStoreMessage))
 }
 
-// Публичный API ---------------------------------------------------------------
+// Public API ---------------------------------------------------------------
 
-/// Создать новое хранилище задач
+/// Create new task storage
 pub fn new() -> TaskStore {
   let assert Ok(actor) =
     actor.new(dict.new())
@@ -41,22 +41,22 @@ pub fn new() -> TaskStore {
   TaskStore(actor.data)
 }
 
-/// Получить все задачи
+/// Get all tasks
 pub fn get_all(store: TaskStore) -> List(Task) {
   process.call(store.subject, 5000, GetAll)
 }
 
-/// Получить задачу по ID
+/// Get task by ID
 pub fn get_by_id(store: TaskStore, id: Int) -> Option(Task) {
   process.call(store.subject, 5000, GetById(id, _))
 }
 
-/// Создать новую задачу
+/// Create new task
 pub fn create(store: TaskStore, data: CreateTaskData) -> Task {
   process.call(store.subject, 5000, Create(data, _))
 }
 
-/// Обновить задачу
+/// Update task
 pub fn update(
   store: TaskStore,
   id: Int,
@@ -65,22 +65,22 @@ pub fn update(
   process.call(store.subject, 5000, Update(id, updater, _))
 }
 
-/// Удалить задачу
+/// Delete task
 pub fn delete(store: TaskStore, id: Int) -> Bool {
   process.call(store.subject, 5000, Delete(id, _))
 }
 
-/// Запустить таймер для задачи
+/// Start timer for task
 pub fn start_timer(store: TaskStore, id: Int, current_time: Int) -> Option(Task) {
   process.call(store.subject, 5000, StartTimer(id, current_time, _))
 }
 
-/// Остановить таймер для задачи
+/// Stop timer for task
 pub fn stop_timer(store: TaskStore, id: Int, current_time: Int) -> Option(Task) {
   process.call(store.subject, 5000, StopTimer(id, current_time, _))
 }
 
-// Внутренняя реализация (в памяти) ---------------------------------------------
+// Internal implementation (in memory) ---------------------------------------------
 
 type StoreState =
   Dict(Int, Task)

@@ -1,5 +1,5 @@
 // middleware/logger.gleam
-// Middleware для логирования HTTP запросов
+// HTTP request logging middleware
 
 import gleam/http
 import gleam/http/request.{type Request}
@@ -8,8 +8,8 @@ import gleam/int
 import gleam/string
 import mist.{type Connection, type ResponseData}
 
-/// Middleware для логирования HTTP запросов
-/// Логирует: METHOD path status duration_ms
+/// Middleware for logging HTTP requests
+/// Logs: METHOD path status duration_ms
 pub fn log_request(
   request: Request(Connection),
   handler: fn() -> Response(ResponseData),
@@ -25,7 +25,7 @@ pub fn log_request(
   let path = request.path
   let status = response.status
 
-  // Вывод в stderr для логов (как делает большинство серверов)
+  // Output to stderr for logs (as most servers do)
   log_request_line(method, path, status, duration)
 
   response
@@ -57,11 +57,11 @@ fn log_request_line(
     d -> int.to_string(d) <> "ms"
   }
 
-  // Формат: METHOD /path STATUS duration
+  // Format: METHOD /path STATUS duration
   let log_line =
     method <> " " <> path <> " " <> int.to_string(status) <> " " <> duration_str
 
-  // Вывод в stderr с помощью Erlang io:format
+  // Output to stderr using Erlang io:format
   log_message(log_line)
 }
 

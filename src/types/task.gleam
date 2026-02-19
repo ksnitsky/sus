@@ -1,12 +1,12 @@
 // types/task.gleam
-// Общие типы для задач, используются во всём приложении
+// Common types for tasks, used throughout the application
 
 import gleam/dynamic/decode
 import gleam/int
 import gleam/json
 import gleam/option.{type Option}
 
-/// Статус задачи
+/// Task status
 pub type TaskStatus {
   NotStarted
   InProgress
@@ -14,7 +14,7 @@ pub type TaskStatus {
   Paused
 }
 
-/// Задача с таймером
+/// Task with timer
 pub type Task {
   Task(
     id: Int,
@@ -27,12 +27,12 @@ pub type Task {
   )
 }
 
-/// Данные для создания новой задачи
+/// Data for creating new task
 pub type CreateTaskData {
   CreateTaskData(name: String, description: String)
 }
 
-/// Получить отображаемое название статуса
+/// Get display name for status (UI text in Russian)
 pub fn status_to_string(status: TaskStatus) -> String {
   case status {
     NotStarted -> "Не начата"
@@ -42,7 +42,7 @@ pub fn status_to_string(status: TaskStatus) -> String {
   }
 }
 
-/// Преобразовать статус в строку для CSS-класса
+/// Convert status to CSS class string
 pub fn status_to_class(status: TaskStatus) -> String {
   case status {
     NotStarted -> "status-not-started"
@@ -52,7 +52,7 @@ pub fn status_to_class(status: TaskStatus) -> String {
   }
 }
 
-/// Форматировать секунды в читаемый формат (ЧЧ:ММ:СС или ММ:СС)
+/// Format seconds to readable format (HH:MM:SS or MM:SS)
 pub fn format_duration(seconds: Int) -> String {
   let hours = seconds / 3600
   let minutes = { seconds % 3600 } / 60
@@ -75,16 +75,16 @@ fn pad_zero(n: Int) -> String {
   }
 }
 
-/// Получить текущее время в секундах (Unix timestamp)
+/// Get current time in seconds (Unix timestamp)
 @external(erlang, "erlang", "system_time")
 pub fn now_internal() -> Int
 
-/// Получить текущее время в секундах (Unix timestamp)
+/// Get current time in seconds (Unix timestamp)
 pub fn now() -> Int {
   now_internal() / 1_000_000_000
 }
 
-/// JSON encoder для Task
+/// JSON encoder for Task
 pub fn task_to_json(task: Task) -> json.Json {
   json.object([
     #("id", json.int(task.id)),
@@ -100,7 +100,7 @@ pub fn task_to_json(task: Task) -> json.Json {
   ])
 }
 
-/// JSON decoder для CreateTaskData
+/// JSON decoder for CreateTaskData
 pub fn create_task_data_decoder() {
   use name <- decode.field("name", decode.string)
   use description <- decode.field("description", decode.string)

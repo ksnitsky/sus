@@ -1,11 +1,11 @@
 // components/layout.gleam
-// Общий layout для всех страниц
+// Common layout for all pages
 
 import lustre/attribute
 import lustre/element.{type Element}
 import lustre/element/html
 
-/// Основной layout страницы
+/// Main page layout
 pub fn layout(title: String, children: List(Element(msg))) -> Element(msg) {
   html.html([attribute.lang("ru")], [
     html.head([], [
@@ -45,7 +45,7 @@ pub fn layout(title: String, children: List(Element(msg))) -> Element(msg) {
   ])
 }
 
-/// Инлайн CSS стили
+/// Inline CSS styles
 fn inline_styles() -> String {
   "
 body {

@@ -1,5 +1,5 @@
 // router.gleam
-// Маршрутизатор приложения
+// Application router
 
 import gleam/bytes_tree
 import gleam/erlang/application
@@ -32,7 +32,7 @@ fn handle_request_inner(
   case request.path_segments(request) {
     [] -> serve_html()
 
-    // JavaScript runtime для серверных компонентов
+    // JavaScript runtime for server components
     ["lustre", "runtime.mjs"] -> serve_runtime()
 
     ["ws", "tasks"] -> serve_tasks(request, store)
