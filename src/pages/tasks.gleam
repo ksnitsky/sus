@@ -1,4 +1,4 @@
-import components/layout
+// pages/tasks.gleam
 import gleam/erlang/process
 import gleam/list
 import gleam/option.{Some}
@@ -28,9 +28,8 @@ pub type Model {
 }
 
 pub fn init(store: TaskStore) -> Model {
-  let tasks = task_store.get_all(store)
   Model(
-    tasks: tasks,
+    tasks: [],
     new_task_name: "",
     new_task_description: "",
     store: store,
@@ -41,24 +40,29 @@ pub fn init(store: TaskStore) -> Model {
 // UPDATE ----------------------------------------------------------------------
 
 pub opaque type Msg {
-  // Task creation form
+  TasksLoaded(List(Task))
   UserChangedTaskName(String)
   UserChangedTaskDescription(String)
   UserClickedAddTask
-
-  // Task management
   UserClickedStartTask(Int)
   UserClickedPauseTask(Int)
   UserClickedCompleteTask(Int)
   UserClickedDeleteTask(Int)
-
-  // Timer
   Tick
   CheckActiveTimers
 }
 
 pub fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
   case msg {
+    TasksLoaded(tasks) -> {
+      let has_active = list.any(tasks, fn(t) { t.status == InProgress })
+      let tick_effect = case has_active {
+        True -> schedule_tick()
+        False -> effect.none()
+      }
+      #(Model(..model, tasks: tasks, current_time: task.now()), tick_effect)
+    }
+
     UserChangedTaskName(name) -> #(
       Model(..model, new_task_name: name),
       effect.none(),
@@ -164,7 +168,7 @@ fn schedule_tick() -> Effect(Msg) {
 // VIEW ------------------------------------------------------------------------
 
 pub fn view(model: Model) -> Element(Msg) {
-  layout.layout("Task Tracker - Список задач", [
+  html.div([], [
     task_form(model),
     task_list(model.tasks, model.current_time),
   ])
@@ -301,9 +305,12 @@ fn task_actions(t: Task) -> List(Element(Msg)) {
 // COMPONENT -------------------------------------------------------------------
 
 fn init_with_store(store: TaskStore) -> #(Model, Effect(Msg)) {
-  let check_effect = effect.from(fn(dispatch) { dispatch(CheckActiveTimers) })
+  let load_effect = effect.from(fn(dispatch) {
+    let tasks = task_store.get_all(store)
+    dispatch(TasksLoaded(tasks))
+  })
 
-  #(init(store), check_effect)
+  #(init(store), load_effect)
 }
 
 pub fn component(store: TaskStore) -> App(_, Model, Msg) {
