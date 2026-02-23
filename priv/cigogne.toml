@@ -1,0 +1,9 @@
+[database]
+# Uses DATABASE_URL environment variable by default
+
+[migration-table]
+schema = "public"
+table = "_migrations"
+
+[migrations]
+migration_folder = "migrations"

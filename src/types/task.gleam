@@ -1,18 +1,12 @@
 // types/task.gleam
-// Common types for tasks, used throughout the application
+// Common types and utilities for tasks
 
 import gleam/dynamic/decode
 import gleam/int
 import gleam/json
 import gleam/option.{type Option}
-
-/// Task status
-pub type TaskStatus {
-  NotStarted
-  InProgress
-  Completed
-  Paused
-}
+import gleam/time/timestamp.{type Timestamp}
+import sql.{type TaskStatus, Completed, InProgress, NotStarted, Paused}
 
 /// Task with timer
 pub type Task {
@@ -22,8 +16,8 @@ pub type Task {
     description: String,
     status: TaskStatus,
     time_spent_seconds: Int,
-    started_at: Option(Int),
-    created_at: Int,
+    started_at: Option(Timestamp),
+    created_at: Timestamp,
   )
 }
 
@@ -75,13 +69,21 @@ fn pad_zero(n: Int) -> String {
   }
 }
 
-/// Get current time in seconds (Unix timestamp)
-@external(erlang, "erlang", "system_time")
-pub fn now_internal() -> Int
+/// Get current time as Timestamp
+pub fn now() -> Timestamp {
+  timestamp.system_time()
+}
 
-/// Get current time in seconds (Unix timestamp)
-pub fn now() -> Int {
-  now_internal() / 1_000_000_000
+/// Get current time in unix seconds for timer display
+pub fn now_seconds() -> Int {
+  let #(s, _ns) = timestamp.to_unix_seconds_and_nanoseconds(now())
+  s
+}
+
+/// Convert Timestamp to unix seconds for timer calculations
+pub fn timestamp_to_seconds(ts: Timestamp) -> Int {
+  let #(s, _ns) = timestamp.to_unix_seconds_and_nanoseconds(ts)
+  s
 }
 
 /// JSON encoder for Task
@@ -93,10 +95,10 @@ pub fn task_to_json(task: Task) -> json.Json {
     #("status", json.string(status_to_string(task.status))),
     #("time_spent_seconds", json.int(task.time_spent_seconds)),
     #("started_at", case task.started_at {
-      option.Some(t) -> json.int(t)
+      option.Some(t) -> json.int(timestamp_to_seconds(t))
       option.None -> json.null()
     }),
-    #("created_at", json.int(task.created_at)),
+    #("created_at", json.int(timestamp_to_seconds(task.created_at))),
   ])
 }
 

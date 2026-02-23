@@ -1,191 +1,164 @@
 // store/task_store.gleam
-// In-memory task storage with interface for easy database replacement
+// Task storage using PostgreSQL via pog + squirrel-generated queries
 
-import gleam/dict.{type Dict}
-import gleam/erlang/process.{type Subject}
-import gleam/int
 import gleam/list
 import gleam/option.{type Option, None, Some}
-import gleam/otp/actor
-import types/task.{
-  type CreateTaskData, type Task, InProgress, NotStarted, Paused, Task,
-}
+import gleam/time/timestamp.{type Timestamp}
+import pog
+import sql
+import types/task.{type CreateTaskData, type Task, Task}
 
-// Message types -------------------------------------------------------------
-
-/// Messages for actor storage
-pub type TaskStoreMessage {
-  GetAll(reply_to: Subject(List(Task)))
-  GetById(id: Int, reply_to: Subject(Option(Task)))
-  Create(data: CreateTaskData, reply_to: Subject(Task))
-  Update(id: Int, updater: fn(Task) -> Task, reply_to: Subject(Option(Task)))
-  Delete(id: Int, reply_to: Subject(Bool))
-  StartTimer(id: Int, current_time: Int, reply_to: Subject(Option(Task)))
-  StopTimer(id: Int, current_time: Int, reply_to: Subject(Option(Task)))
-}
-
-/// Type for abstraction over storage
+/// Opaque wrapper around pog connection
 pub opaque type TaskStore {
-  TaskStore(subject: Subject(TaskStoreMessage))
+  TaskStore(db: pog.Connection)
 }
 
-// Public API ---------------------------------------------------------------
-
-/// Create new task storage
-pub fn new() -> TaskStore {
-  let assert Ok(actor) =
-    actor.new(dict.new())
-    |> actor.on_message(handle_message)
-    |> actor.start
-
-  TaskStore(actor.data)
+/// Create new task store wrapping a pog connection
+pub fn new(db: pog.Connection) -> TaskStore {
+  TaskStore(db:)
 }
 
 /// Get all tasks
 pub fn get_all(store: TaskStore) -> List(Task) {
-  process.call(store.subject, 5000, GetAll)
+  case sql.get_all_tasks(store.db) {
+    Ok(pog.Returned(_count, rows)) ->
+      list.map(rows, fn(r) {
+        Task(
+          id: r.id,
+          name: r.name,
+          description: r.description,
+          status: r.status,
+          time_spent_seconds: r.time_spent_seconds,
+          started_at: r.started_at,
+          created_at: r.created_at,
+        )
+      })
+    Error(_) -> []
+  }
 }
 
 /// Get task by ID
 pub fn get_by_id(store: TaskStore, id: Int) -> Option(Task) {
-  process.call(store.subject, 5000, GetById(id, _))
+  case sql.get_task_by_id(store.db, id) {
+    Ok(pog.Returned(_, [r, ..])) ->
+      Some(Task(
+        id: r.id,
+        name: r.name,
+        description: r.description,
+        status: r.status,
+        time_spent_seconds: r.time_spent_seconds,
+        started_at: r.started_at,
+        created_at: r.created_at,
+      ))
+    _ -> None
+  }
 }
 
 /// Create new task
-pub fn create(store: TaskStore, data: CreateTaskData) -> Task {
-  process.call(store.subject, 5000, Create(data, _))
-}
-
-/// Update task
-pub fn update(
-  store: TaskStore,
-  id: Int,
-  updater: fn(Task) -> Task,
-) -> Option(Task) {
-  process.call(store.subject, 5000, Update(id, updater, _))
+pub fn create(store: TaskStore, data: CreateTaskData) -> Option(Task) {
+  case sql.create_task(store.db, data.name, data.description) {
+    Ok(pog.Returned(_, [r, ..])) ->
+      Some(Task(
+        id: r.id,
+        name: r.name,
+        description: r.description,
+        status: r.status,
+        time_spent_seconds: r.time_spent_seconds,
+        started_at: r.started_at,
+        created_at: r.created_at,
+      ))
+    _ -> None
+  }
 }
 
 /// Delete task
 pub fn delete(store: TaskStore, id: Int) -> Bool {
-  process.call(store.subject, 5000, Delete(id, _))
+  case sql.delete_task(store.db, id) {
+    Ok(pog.Returned(count, _)) -> count > 0
+    Error(_) -> False
+  }
 }
 
 /// Start timer for task
-pub fn start_timer(store: TaskStore, id: Int, current_time: Int) -> Option(Task) {
-  process.call(store.subject, 5000, StartTimer(id, current_time, _))
-}
-
-/// Stop timer for task
-pub fn stop_timer(store: TaskStore, id: Int, current_time: Int) -> Option(Task) {
-  process.call(store.subject, 5000, StopTimer(id, current_time, _))
-}
-
-// Internal implementation (in memory) ---------------------------------------------
-
-type StoreState =
-  Dict(Int, Task)
-
-fn handle_message(
-  state: StoreState,
-  message: TaskStoreMessage,
-) -> actor.Next(StoreState, TaskStoreMessage) {
-  case message {
-    GetAll(reply_to) -> {
-      let tasks =
-        dict.values(state)
-        |> list.sort(fn(a, b) { int.compare(b.created_at, a.created_at) })
-      process.send(reply_to, tasks)
-      actor.continue(state)
-    }
-
-    GetById(id, reply_to) -> {
-      process.send(reply_to, dict.get(state, id) |> option.from_result)
-      actor.continue(state)
-    }
-
-    Create(data, reply_to) -> {
-      let id = dict.size(state) + 1
-      let task =
-        Task(
-          id: id,
-          name: data.name,
-          description: data.description,
-          status: NotStarted,
-          time_spent_seconds: 0,
-          started_at: None,
-          created_at: id,
-        )
-      let new_state = dict.insert(state, id, task)
-      process.send(reply_to, task)
-      actor.continue(new_state)
-    }
-
-    Update(id, updater, reply_to) -> {
-      case dict.get(state, id) {
-        Ok(task) -> {
-          let updated = updater(task)
-          let new_state = dict.insert(state, id, updated)
-          process.send(reply_to, Some(updated))
-          actor.continue(new_state)
-        }
-        Error(_) -> {
-          process.send(reply_to, None)
-          actor.continue(state)
-        }
-      }
-    }
-
-    Delete(id, reply_to) -> {
-      let existed = dict.has_key(state, id)
-      let new_state = dict.delete(state, id)
-      process.send(reply_to, existed)
-      actor.continue(new_state)
-    }
-
-    StartTimer(id, current_time, reply_to) -> {
-      case dict.get(state, id) {
-        Ok(task) -> {
-          let updated = case task.status {
-            NotStarted | Paused -> {
-              Task(..task, status: InProgress, started_at: Some(current_time))
-            }
-            _ -> task
-          }
-          let new_state = dict.insert(state, id, updated)
-          process.send(reply_to, Some(updated))
-          actor.continue(new_state)
-        }
-        Error(_) -> {
-          process.send(reply_to, None)
-          actor.continue(state)
-        }
-      }
-    }
-
-    StopTimer(id, current_time, reply_to) -> {
-      case dict.get(state, id) {
-        Ok(task) -> {
-          let updated = case task.status, task.started_at {
-            InProgress, Some(started) -> {
-              let elapsed = current_time - started
-              Task(
-                ..task,
-                status: Paused,
-                time_spent_seconds: task.time_spent_seconds + elapsed,
-                started_at: None,
-              )
-            }
-            _, _ -> task
-          }
-          let new_state = dict.insert(state, id, updated)
-          process.send(reply_to, Some(updated))
-          actor.continue(new_state)
-        }
-        Error(_) -> {
-          process.send(reply_to, None)
-          actor.continue(state)
-        }
-      }
-    }
+pub fn start_timer(
+  store: TaskStore,
+  id: Int,
+  current_time: Timestamp,
+) -> Option(Task) {
+  case sql.start_timer(store.db, id, current_time) {
+    Ok(pog.Returned(_, [r, ..])) ->
+      Some(Task(
+        id: r.id,
+        name: r.name,
+        description: r.description,
+        status: r.status,
+        time_spent_seconds: r.time_spent_seconds,
+        started_at: r.started_at,
+        created_at: r.created_at,
+      ))
+    _ -> None
   }
+}
+
+/// Stop timer for task (calculates elapsed seconds and accumulates)
+pub fn stop_timer(
+  store: TaskStore,
+  id: Int,
+  current_time: Timestamp,
+) -> Option(Task) {
+  // First get the task to calculate elapsed time
+  case get_by_id(store, id) {
+    Some(t) -> {
+      case t.started_at {
+        Some(started) -> {
+          let elapsed = timestamp_diff_seconds(current_time, started)
+          case sql.stop_timer(store.db, id, elapsed) {
+            Ok(pog.Returned(_, [r, ..])) ->
+              Some(Task(
+                id: r.id,
+                name: r.name,
+                description: r.description,
+                status: r.status,
+                time_spent_seconds: r.time_spent_seconds,
+                started_at: r.started_at,
+                created_at: r.created_at,
+              ))
+            _ -> None
+          }
+        }
+        None -> None
+      }
+    }
+    None -> None
+  }
+}
+
+/// Complete a task (stops timer if running)
+pub fn complete_task(
+  store: TaskStore,
+  id: Int,
+  current_time: Timestamp,
+) -> Option(Task) {
+  case sql.complete_task(store.db, id, current_time) {
+    Ok(pog.Returned(_, [r, ..])) ->
+      Some(Task(
+        id: r.id,
+        name: r.name,
+        description: r.description,
+        status: r.status,
+        time_spent_seconds: r.time_spent_seconds,
+        started_at: r.started_at,
+        created_at: r.created_at,
+      ))
+    _ -> None
+  }
+}
+
+// Internal helpers -----------------------------------------------------------
+
+/// Calculate difference between two timestamps in seconds
+fn timestamp_diff_seconds(later: Timestamp, earlier: Timestamp) -> Int {
+  let #(later_s, _) = timestamp.to_unix_seconds_and_nanoseconds(later)
+  let #(earlier_s, _) = timestamp.to_unix_seconds_and_nanoseconds(earlier)
+  later_s - earlier_s
 }

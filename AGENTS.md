@@ -2,12 +2,24 @@
 
 ## Проект: Task Tracker (sus)
 
-**Стек:** Gleam + Lustre (server components) + Mist (HTTP сервер) + OTP Actor
+**Стек:** Gleam + Lustre (server components) + Mist (HTTP сервер) + PostgreSQL (pog + squirrel + cigogne)
 
 **Запуск:**
 ```bash
+# 1. Start PostgreSQL (if not running)
+# 2. Set DATABASE_URL (or use default: postgres://postgres@localhost:5432/sus)
+export DATABASE_URL="postgres://postgres@localhost:5432/sus"
+
+# 3. Apply migrations
+gleam run -m cigogne all
+
+# 4. Generate type-safe SQL (only needed after changing .sql files)
+gleam run -m squirrel
+
+# 5. Run the app
 gleam run   # http://localhost:1234
-gleam test  # запуск тестов
+
+gleam test  # run tests
 ```
 
 **Важно:** Не запускай сервер (`gleam run`) самостоятельно. Предоставь команду пользователю, чтобы он запустил её сам.
@@ -15,13 +27,17 @@ gleam test  # запуск тестов
 ## Архитектура
 
 ### Структура
-- `src/sus.gleam` - entry point, HTTP server startup
+- `src/sus.gleam` - entry point, pog pool setup, HTTP server startup
 - `src/router.gleam` - routing: HTML, JS runtime, WebSocket
 - `src/pages/tasks.gleam` - Lustre component (Model/Update/View)
-- `src/store/task_store.gleam` - in-memory storage via OTP actor
-- `src/types/task.gleam` - Task, TaskStatus types + JSON encoding
+- `src/store/task_store.gleam` - task storage backed by PostgreSQL
+- `src/types/task.gleam` - Task, TaskStatus types + JSON encoding + time utilities
+- `src/sql.gleam` - **auto-generated** by squirrel, type-safe SQL query functions
+- `src/sql/*.sql` - raw SQL queries (source for squirrel code generation)
 - `src/components/layout.gleam` - shared layout + inline CSS
 - `src/middleware/logger.gleam` - HTTP request logging middleware
+- `priv/migrations/` - database migrations (managed by cigogne)
+- `priv/cigogne.toml` - cigogne configuration
 
 ### Ключевые паттерны
 
@@ -30,10 +46,24 @@ gleam test  # запуск тестов
 - `pages/tasks.gleam` - полноценное Lustre приложение (init/update/view)
 - WebSocket endpoint: `/ws/tasks`
 
-**2. Task Store (OTP Actor)**
-- Хранилище в памяти через `gleam_otp/actor`
-- Асинхронные сообщения с таймаутом 5000ms
-- Интерфейс позволяет легко заменить на БД
+**2. Database (PostgreSQL + Squirrel + Cigogne)**
+
+**Migrations (cigogne):**
+- Migration files in `priv/migrations/` with format `<timestamp>-<name>.sql`
+- Each file has `--- migration:up` and `--- migration:down` sections
+- Commands: `gleam run -m cigogne all|up|down|show|new --name NAME`
+
+**Type-safe SQL (squirrel):**
+- Write raw SQL in `src/sql/*.sql` files (one query per file)
+- Run `gleam run -m squirrel` to generate `src/sql.gleam`
+- Squirrel connects to the database to infer types and generate decoders
+- **Do NOT edit `src/sql.gleam` manually** — it is auto-generated
+- TaskStatus enum is auto-generated from PostgreSQL's `task_status` enum
+
+**Task Store (pog):**
+- `task_store.gleam` wraps pog connection in opaque `TaskStore` type
+- All queries go through squirrel-generated functions in `sql.gleam`
+- Public API preserved: `get_all`, `get_by_id`, `create`, `delete`, `start_timer`, `stop_timer`, `complete_task`
 
 **3. Таймер задач (Time Tracking)**
 
@@ -41,18 +71,19 @@ The timer uses a dual-field approach to track time without periodic updates:
 
 ```gleam
 type Task {
-  time_spent_seconds: Int,     // Accumulated time (stored permanently)
-  started_at: Option(Int),     // Unix timestamp when timer started (None when paused)
-  status: TaskStatus,          // NotStarted | InProgress | Paused | Completed
+  time_spent_seconds: Int,           // Accumulated time (stored in DB)
+  started_at: Option(Timestamp),     // When timer started (NULL when paused)
+  status: TaskStatus,                // NotStarted | InProgress | Paused | Completed
 }
 ```
 
 **How it works:**
-- `start_timer(store, id, current_time)` - Sets `started_at = Some(current_time)` and status = InProgress
-- `stop_timer(store, id, current_time)` - Calculates elapsed time: `current_time - started_at`, adds to `time_spent_seconds`, sets `started_at = None` and status = Paused
+- `start_timer(store, id, current_time)` - Sets `started_at` and status = InProgress (SQL update with status filter)
+- `stop_timer(store, id, current_time)` - Calculates elapsed seconds, adds to `time_spent_seconds`, sets `started_at = NULL` and status = Paused
+- `complete_task(store, id, current_time)` - Handles timer stop + status = Completed in a single SQL query
 - **Display calculation**: For active tasks: `time_spent_seconds + (now - started_at)`
 
-**Important**: The timer uses a periodic Tick (every second) to update the UI for active tasks. Each task spawns its own timer when started.
+**Important**: The timer uses a periodic Tick (every second) to update the UI for active tasks.
 
 **4. HTTP Request Logging**
 
@@ -63,45 +94,49 @@ use <- logger.log_request(request)
 
 Format: `METHOD /path STATUS duration_ms`
 
-Example:
-```
-GET / 200 5ms
-GET /lustre/runtime.mjs 200 2ms
-POST /ws/tasks 200 15ms
-```
-
-Implementation uses Erlang's `erlang:system_time/1` for timing and `io:format/2` for output to stderr.
-
 ### Типы данных
 
 ```gleam
-// Статусы
+// TaskStatus (auto-generated by squirrel from PostgreSQL enum)
+// Defined in sql.gleam, re-exported via types/task.gleam
 NotStarted | InProgress | Completed | Paused
 
-// Задача
+// Task
 type Task {
   id: Int,
   name: String,
   description: String,
   status: TaskStatus,
   time_spent_seconds: Int,
-  started_at: Option(Int),  // Unix timestamp
-  created_at: Int,
+  started_at: Option(Timestamp),  // gleam/time/timestamp
+  created_at: Timestamp,
 }
 ```
 
 ### API хранилища
 
 ```gleam
-task_store.new() -> TaskStore
+task_store.new(db: pog.Connection) -> TaskStore
 task_store.get_all(store) -> List(Task)
 task_store.get_by_id(store, id) -> Option(Task)
-task_store.create(store, data) -> Task
-task_store.update(store, id, updater) -> Option(Task)
+task_store.create(store, data) -> Option(Task)
 task_store.delete(store, id) -> Bool
-task_store.start_timer(store, id, current_time) -> Option(Task)
-task_store.stop_timer(store, id, current_time) -> Option(Task)
+task_store.start_timer(store, id, current_time: Timestamp) -> Option(Task)
+task_store.stop_timer(store, id, current_time: Timestamp) -> Option(Task)
+task_store.complete_task(store, id, current_time: Timestamp) -> Option(Task)
 ```
+
+### SQL файлы (src/sql/)
+
+| Файл | Назначение |
+|------|-----------|
+| `get_all_tasks.sql` | SELECT all tasks ordered by created_at DESC |
+| `get_task_by_id.sql` | SELECT task by id |
+| `create_task.sql` | INSERT with name, description; RETURNING * |
+| `delete_task.sql` | DELETE by id |
+| `start_timer.sql` | UPDATE status + started_at (only if not_started/paused) |
+| `stop_timer.sql` | UPDATE status + time_spent_seconds (only if in_progress) |
+| `complete_task.sql` | UPDATE status to completed, calculate elapsed if running |
 
 ### CSS классы статусов
 
@@ -116,19 +151,28 @@ task_store.stop_timer(store, id, current_time) -> Option(Task)
 
 ## Ограничения
 
-- Хранилище в памяти - данные теряются при перезапуске
-- Нет персистентности
 - Нет валидации входных данных
 - Нет аутентификации
 - Таймер использует периодический Tick каждую секунду для обновления отображения активных задач
+- Требуется запущенный PostgreSQL сервер
 
 ## Зависимости
 
+### Runtime
 - `lustre` - фреймворк для UI
 - `mist` - HTTP/WebSocket сервер
 - `gleam_json` - JSON кодирование
 - `gleam_otp` - OTP процессы
 - `gleam_erlang` - FFI для Erlang
+- `pog` - PostgreSQL драйвер
+- `gleam_time` - работа с временем (Timestamp)
+- `envoy` - чтение переменных окружения
+- `cigogne` - миграции БД
+- `birl` - дополнительная работа с датами
+
+### Dev
+- `gleeunit` - тестирование
+- `squirrel` - генерация типобезопасных SQL функций
 
 ## Тесты
 
