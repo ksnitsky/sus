@@ -305,10 +305,11 @@ fn task_actions(t: Task) -> List(Element(Msg)) {
 // COMPONENT -------------------------------------------------------------------
 
 fn init_with_store(store: TaskStore) -> #(Model, Effect(Msg)) {
-  let load_effect = effect.from(fn(dispatch) {
-    let tasks = task_store.get_all(store)
-    dispatch(TasksLoaded(tasks))
-  })
+  let load_effect =
+    effect.from(fn(dispatch) {
+      let tasks = task_store.get_all(store)
+      dispatch(TasksLoaded(tasks))
+    })
 
   #(init(store), load_effect)
 }

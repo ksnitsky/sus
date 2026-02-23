@@ -76,10 +76,7 @@ fn serve_html() -> Response(ResponseData) {
         [
           html.header([], [html.h1([], [html.text("Task Tracker")])]),
           html.main([], [
-            server_component.element(
-              [server_component.route("/ws/tasks")],
-              [],
-            ),
+            server_component.element([server_component.route("/ws/tasks")], []),
           ]),
           html.footer(
             [
