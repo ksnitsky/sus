@@ -2,16 +2,17 @@ import components/layout
 import gleam/erlang/process
 import gleam/list
 import gleam/option.{Some}
+import gleam/time/timestamp.{type Timestamp}
 import lustre.{type App}
 import lustre/attribute
 import lustre/effect.{type Effect}
 import lustre/element.{type Element}
 import lustre/element/html
 import lustre/event
+import sql.{Completed, InProgress, NotStarted, Paused}
 import store/task_store.{type TaskStore}
 import types/task.{
-  type Task, Completed, CreateTaskData, InProgress, NotStarted, Paused, Task,
-  format_duration, status_to_class, status_to_string,
+  type Task, CreateTaskData, format_duration, status_to_class, status_to_string,
 }
 
 // MODEL -----------------------------------------------------------------------
@@ -22,7 +23,7 @@ pub type Model {
     new_task_name: String,
     new_task_description: String,
     store: TaskStore,
-    current_time: Int,
+    current_time: Timestamp,
   )
 }
 
@@ -40,18 +41,18 @@ pub fn init(store: TaskStore) -> Model {
 // UPDATE ----------------------------------------------------------------------
 
 pub opaque type Msg {
-  // Форма создания задачи
+  // Task creation form
   UserChangedTaskName(String)
   UserChangedTaskDescription(String)
   UserClickedAddTask
 
-  // Управление задачами
+  // Task management
   UserClickedStartTask(Int)
   UserClickedPauseTask(Int)
   UserClickedCompleteTask(Int)
   UserClickedDeleteTask(Int)
 
-  // Таймер
+  // Timer
   Tick
   CheckActiveTimers
 }
@@ -131,11 +132,7 @@ pub fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
 
     UserClickedCompleteTask(id) -> {
       let now = task.now()
-      let _ = task_store.stop_timer(model.store, id, now)
-      let _ =
-        task_store.update(model.store, id, fn(task) {
-          Task(..task, status: Completed)
-        })
+      let _ = task_store.complete_task(model.store, id, now)
       let tasks = task_store.get_all(model.store)
       #(Model(..model, tasks: tasks, current_time: now), effect.none())
     }
@@ -151,7 +148,7 @@ pub fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
 // Timer -----------------------------------------------------------------------
 
 /// Start a timer in a background.
-/// Each task spawns timer for himsefl when user pressed start task.
+/// Each task spawns timer for itself when user pressed start task.
 fn schedule_tick() -> Effect(Msg) {
   effect.from(fn(dispatch) {
     let _ =
@@ -203,13 +200,13 @@ fn task_form(model: Model) -> Element(Msg) {
   ])
 }
 
-fn task_list(tasks: List(Task), current_time: Int) -> Element(Msg) {
+fn task_list(tasks: List(Task), current_time: Timestamp) -> Element(Msg) {
   case tasks {
     [] -> empty_state()
     _ ->
       html.ul(
         [attribute.class("task-list")],
-        list.map(tasks, fn(task) { task_item(task, current_time) }),
+        list.map(tasks, fn(t) { task_item(t, current_time) }),
       )
   }
 }
@@ -221,50 +218,52 @@ fn empty_state() -> Element(Msg) {
   ])
 }
 
-fn task_item(task: Task, current_time: Int) -> Element(Msg) {
-  let status_class = status_to_class(task.status)
-  let display_time = case task.status, task.started_at {
+fn task_item(t: Task, current_time: Timestamp) -> Element(Msg) {
+  let status_class = status_to_class(t.status)
+  let display_time = case t.status, t.started_at {
     InProgress, Some(started) ->
-      task.time_spent_seconds + { current_time - started }
-    _, _ -> task.time_spent_seconds
+      t.time_spent_seconds
+      + {
+        task.timestamp_to_seconds(current_time)
+        - task.timestamp_to_seconds(started)
+      }
+    _, _ -> t.time_spent_seconds
   }
 
   html.li([attribute.class("task-item " <> status_class)], [
     html.div([attribute.class("task-header")], [
-      html.h3([attribute.class("task-name")], [html.text(task.name)]),
+      html.h3([attribute.class("task-name")], [html.text(t.name)]),
       html.span([attribute.class("task-status " <> status_class)], [
-        html.text(status_to_string(task.status)),
+        html.text(status_to_string(t.status)),
       ]),
     ]),
-
-    case task.description {
+    case t.description {
       "" -> html.div([], [])
       desc -> html.p([attribute.class("task-description")], [html.text(desc)])
     },
-
     html.div([attribute.class("task-footer")], [
       html.span([attribute.class("task-time")], [
         html.text(format_duration(display_time)),
       ]),
-      html.div([attribute.class("task-actions")], task_actions(task)),
+      html.div([attribute.class("task-actions")], task_actions(t)),
     ]),
   ])
 }
 
-fn task_actions(task: Task) -> List(Element(Msg)) {
-  case task.status {
+fn task_actions(t: Task) -> List(Element(Msg)) {
+  case t.status {
     NotStarted | Paused -> [
       html.button(
         [
           attribute.class("btn btn-success"),
-          event.on_click(UserClickedStartTask(task.id)),
+          event.on_click(UserClickedStartTask(t.id)),
         ],
         [html.text("▶ Старт")],
       ),
       html.button(
         [
           attribute.class("btn btn-danger"),
-          event.on_click(UserClickedDeleteTask(task.id)),
+          event.on_click(UserClickedDeleteTask(t.id)),
         ],
         [html.text("🗑 Удалить")],
       ),
@@ -274,14 +273,14 @@ fn task_actions(task: Task) -> List(Element(Msg)) {
       html.button(
         [
           attribute.class("btn btn-warning"),
-          event.on_click(UserClickedPauseTask(task.id)),
+          event.on_click(UserClickedPauseTask(t.id)),
         ],
         [html.text("⏸ Пауза")],
       ),
       html.button(
         [
           attribute.class("btn btn-success"),
-          event.on_click(UserClickedCompleteTask(task.id)),
+          event.on_click(UserClickedCompleteTask(t.id)),
         ],
         [html.text("✓ Завершить")],
       ),
@@ -291,7 +290,7 @@ fn task_actions(task: Task) -> List(Element(Msg)) {
       html.button(
         [
           attribute.class("btn btn-danger"),
-          event.on_click(UserClickedDeleteTask(task.id)),
+          event.on_click(UserClickedDeleteTask(t.id)),
         ],
         [html.text("🗑 Удалить")],
       ),
