@@ -10,7 +10,9 @@ import gleam/json
 import gleam/option.{type Option, None, Some}
 import gleam/string_tree
 import lustre
+import lustre/attribute
 import lustre/element
+import lustre/element/html
 import lustre/server_component
 import middleware/logger
 import mist.{type Connection, type ResponseData}
@@ -45,33 +47,57 @@ fn handle_request_inner(
 // HTML ------------------------------------------------------------------------
 
 fn serve_html() -> Response(ResponseData) {
-  let server_component_html =
-    server_component.element([server_component.route("/ws/tasks")], [])
+  let html_string =
+    html.html([attribute.lang("ru")], [
+      html.head([], [
+        html.meta([attribute.charset("utf-8")]),
+        html.meta([
+          attribute.name("viewport"),
+          attribute.content("width=device-width, initial-scale=1"),
+        ]),
+        html.title([], "Task Tracker"),
+        html.link([
+          attribute.rel("stylesheet"),
+          attribute.href("/static/styles.css"),
+        ]),
+        html.script(
+          [attribute.type_("module"), attribute.src("/lustre/runtime.mjs")],
+          "",
+        ),
+      ]),
+      html.body(
+        [
+          attribute.styles([
+            #("max-width", "800px"),
+            #("margin", "0 auto"),
+            #("padding", "20px"),
+          ]),
+        ],
+        [
+          html.header([], [html.h1([], [html.text("Task Tracker")])]),
+          html.main([], [
+            server_component.element(
+              [server_component.route("/ws/tasks")],
+              [],
+            ),
+          ]),
+          html.footer(
+            [
+              attribute.styles([
+                #("margin-top", "40px"),
+                #("text-align", "center"),
+                #("color", "#666"),
+              ]),
+            ],
+            [html.text("Task Tracker \u{00A9} 2025")],
+          ),
+        ],
+      ),
+    ])
     |> element.to_string
 
-  let html_string =
-    "<!DOCTYPE html>"
-    <> "<html lang=\"ru\">"
-    <> "<head>"
-    <> "<meta charset=\"utf-8\">"
-    <> "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
-    <> "<title>Task Tracker</title>"
-    <> "<link rel=\"stylesheet\" href=\"/static/styles.css\">"
-    <> "<script type=\"module\" src=\"/lustre/runtime.mjs\"></script>"
-    <> "</head>"
-    <> "<body style=\"max-width:800px;margin:0 auto;padding:20px\">"
-    <> "<header><h1>Task Tracker</h1></header>"
-    <> "<main>"
-    <> server_component_html
-    <> "</main>"
-    <> "<footer style=\"margin-top:40px;text-align:center;color:#666\">"
-    <> "Task Tracker \u{00A9} 2025"
-    <> "</footer>"
-    <> "</body>"
-    <> "</html>"
-
   let html =
-    html_string
+    { "<!DOCTYPE html>" <> html_string }
     |> string_tree.from_string
     |> bytes_tree.from_string_tree
 
