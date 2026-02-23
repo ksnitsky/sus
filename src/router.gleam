@@ -32,8 +32,9 @@ fn handle_request_inner(
   case request.path_segments(request) {
     [] -> serve_html()
 
-    // JavaScript runtime for server components
     ["lustre", "runtime.mjs"] -> serve_runtime()
+
+    ["static", "styles.css"] -> serve_css()
 
     ["ws", "tasks"] -> serve_tasks(request, store)
 
@@ -55,10 +56,17 @@ fn serve_html() -> Response(ResponseData) {
     <> "<meta charset=\"utf-8\">"
     <> "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
     <> "<title>Task Tracker</title>"
+    <> "<link rel=\"stylesheet\" href=\"/static/styles.css\">"
     <> "<script type=\"module\" src=\"/lustre/runtime.mjs\"></script>"
     <> "</head>"
     <> "<body style=\"max-width:800px;margin:0 auto;padding:20px\">"
+    <> "<header><h1>Task Tracker</h1></header>"
+    <> "<main>"
     <> server_component_html
+    <> "</main>"
+    <> "<footer style=\"margin-top:40px;text-align:center;color:#666\">"
+    <> "Task Tracker \u{00A9} 2025"
+    <> "</footer>"
     <> "</body>"
     <> "</html>"
 
@@ -72,7 +80,7 @@ fn serve_html() -> Response(ResponseData) {
   |> response.set_header("content-type", "text/html")
 }
 
-// JAVASCRIPT ------------------------------------------------------------------
+// STATIC ASSETS ---------------------------------------------------------------
 
 fn serve_runtime() -> Response(ResponseData) {
   let assert Ok(lustre_priv) = application.priv_directory("lustre")
@@ -82,6 +90,30 @@ fn serve_runtime() -> Response(ResponseData) {
     Ok(file) ->
       response.new(200)
       |> response.prepend_header("content-type", "application/javascript")
+      |> response.prepend_header(
+        "cache-control",
+        "public, max-age=86400, immutable",
+      )
+      |> response.set_body(file)
+
+    Error(_) ->
+      response.new(404)
+      |> response.set_body(mist.Bytes(bytes_tree.new()))
+  }
+}
+
+fn serve_css() -> Response(ResponseData) {
+  let assert Ok(app_priv) = application.priv_directory("sus")
+  let file_path = app_priv <> "/static/styles.css"
+
+  case mist.send_file(file_path, offset: 0, limit: None) {
+    Ok(file) ->
+      response.new(200)
+      |> response.prepend_header("content-type", "text/css")
+      |> response.prepend_header(
+        "cache-control",
+        "public, max-age=86400, immutable",
+      )
       |> response.set_body(file)
 
     Error(_) ->
