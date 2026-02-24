@@ -8,12 +8,10 @@ import router
 import store/task_store
 
 pub fn main() {
-  // Read database URL from environment
   let database_url =
     envoy.get("DATABASE_URL")
     |> result.unwrap("postgres://postgres@localhost:5432/sus")
 
-  // Create pog connection pool
   let pool_name = process.new_name("db_pool")
   let assert Ok(config) = pog.url_config(pool_name, database_url)
   let assert Ok(started) =
@@ -24,7 +22,6 @@ pub fn main() {
   let db = started.data
   io.println("Connected to PostgreSQL")
 
-  // Create task store backed by database
   let store = task_store.new(db)
 
   let assert Ok(_) =

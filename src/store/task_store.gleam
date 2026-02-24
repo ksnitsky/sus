@@ -3,7 +3,9 @@
 
 import gleam/list
 import gleam/option.{type Option, None, Some}
+import gleam/string
 import gleam/time/timestamp.{type Timestamp}
+import middleware/logger
 import pog
 import sql
 import types/task.{type CreateTaskData, type Task, Task}
@@ -33,7 +35,10 @@ pub fn get_all(store: TaskStore) -> List(Task) {
           created_at: r.created_at,
         )
       })
-    Error(_) -> []
+    Error(e) -> {
+      logger.log_error("get_all failed: " <> string.inspect(e))
+      []
+    }
   }
 }
 
@@ -50,7 +55,13 @@ pub fn get_by_id(store: TaskStore, id: Int) -> Option(Task) {
         started_at: r.started_at,
         created_at: r.created_at,
       ))
-    _ -> None
+    Ok(pog.Returned(_, [])) -> None
+    Error(e) -> {
+      logger.log_error(
+        "get_by_id(" <> string.inspect(id) <> ") failed: " <> string.inspect(e),
+      )
+      None
+    }
   }
 }
 
@@ -67,7 +78,11 @@ pub fn create(store: TaskStore, data: CreateTaskData) -> Option(Task) {
         started_at: r.started_at,
         created_at: r.created_at,
       ))
-    _ -> None
+    Ok(pog.Returned(_, [])) -> None
+    Error(e) -> {
+      logger.log_error("create failed: " <> string.inspect(e))
+      None
+    }
   }
 }
 
@@ -75,7 +90,12 @@ pub fn create(store: TaskStore, data: CreateTaskData) -> Option(Task) {
 pub fn delete(store: TaskStore, id: Int) -> Bool {
   case sql.delete_task(store.db, id) {
     Ok(pog.Returned(count, _)) -> count > 0
-    Error(_) -> False
+    Error(e) -> {
+      logger.log_error(
+        "delete(" <> string.inspect(id) <> ") failed: " <> string.inspect(e),
+      )
+      False
+    }
   }
 }
 
@@ -96,7 +116,16 @@ pub fn start_timer(
         started_at: r.started_at,
         created_at: r.created_at,
       ))
-    _ -> None
+    Ok(pog.Returned(_, [])) -> None
+    Error(e) -> {
+      logger.log_error(
+        "start_timer("
+        <> string.inspect(id)
+        <> ") failed: "
+        <> string.inspect(e),
+      )
+      None
+    }
   }
 }
 
@@ -106,7 +135,6 @@ pub fn stop_timer(
   id: Int,
   current_time: Timestamp,
 ) -> Option(Task) {
-  // First get the task to calculate elapsed time
   case get_by_id(store, id) {
     Some(t) -> {
       case t.started_at {
@@ -123,7 +151,16 @@ pub fn stop_timer(
                 started_at: r.started_at,
                 created_at: r.created_at,
               ))
-            _ -> None
+            Ok(pog.Returned(_, [])) -> None
+            Error(e) -> {
+              logger.log_error(
+                "stop_timer("
+                <> string.inspect(id)
+                <> ") failed: "
+                <> string.inspect(e),
+              )
+              None
+            }
           }
         }
         None -> None
@@ -150,7 +187,16 @@ pub fn complete_task(
         started_at: r.started_at,
         created_at: r.created_at,
       ))
-    _ -> None
+    Ok(pog.Returned(_, [])) -> None
+    Error(e) -> {
+      logger.log_error(
+        "complete_task("
+        <> string.inspect(id)
+        <> ") failed: "
+        <> string.inspect(e),
+      )
+      None
+    }
   }
 }
 

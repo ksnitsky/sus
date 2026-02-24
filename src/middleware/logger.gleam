@@ -72,6 +72,10 @@ fn log_message(message: String) -> Nil {
   log_format("~ts~n", [message])
 }
 
+pub fn log_error(message: String) -> Nil {
+  log_format("[ERROR] ~ts~n", [message])
+}
+
 // Получение текущего времени в миллисекундах
 @external(erlang, "erlang", "system_time")
 fn system_time(unit: TimeUnit) -> Int

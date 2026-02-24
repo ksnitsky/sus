@@ -8,6 +8,7 @@ import gleam/http/request.{type Request}
 import gleam/http/response.{type Response}
 import gleam/json
 import gleam/option.{type Option, None, Some}
+import gleam/string
 import gleam/string_tree
 import lustre
 import lustre/attribute
@@ -119,9 +120,11 @@ fn serve_runtime() -> Response(ResponseData) {
       )
       |> response.set_body(file)
 
-    Error(_) ->
+    Error(e) -> {
+      logger.log_error("Failed to serve runtime: " <> string.inspect(e))
       response.new(404)
       |> response.set_body(mist.Bytes(bytes_tree.new()))
+    }
   }
 }
 
@@ -139,9 +142,11 @@ fn serve_css() -> Response(ResponseData) {
       )
       |> response.set_body(file)
 
-    Error(_) ->
+    Error(e) -> {
+      logger.log_error("Failed to serve CSS: " <> string.inspect(e))
       response.new(404)
       |> response.set_body(mist.Bytes(bytes_tree.new()))
+    }
   }
 }
 
@@ -196,7 +201,10 @@ fn loop_tasks_socket(
     mist.Text(json) -> {
       case json.parse(json, server_component.runtime_message_decoder()) {
         Ok(runtime_message) -> lustre.send(state.component, runtime_message)
-        Error(_) -> Nil
+        Error(e) -> {
+          logger.log_error("WebSocket JSON parse error: " <> string.inspect(e))
+          Nil
+        }
       }
       mist.continue(state)
     }
